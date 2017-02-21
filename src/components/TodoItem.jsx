@@ -1,6 +1,6 @@
 var React = require('react');
 var moment = require('moment');
-var ListItem = React.createClass({
+var TodoItem = React.createClass({
     render: function() {
         var item = this.props.item;
         var createdAt = moment(item.created_at).format("MM-DD-YYYY");
@@ -13,4 +13,4 @@ var ListItem = React.createClass({
     }
 });
 
-module.exports = ListItem;
+module.exports = TodoItem;

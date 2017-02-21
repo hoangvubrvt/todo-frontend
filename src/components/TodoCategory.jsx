@@ -1,7 +1,7 @@
 var React = require('react');
-var List = require('./List.jsx');
-
-var ListManager = React.createClass({
+var TodoList = require('./TodoList.jsx');
+var HTTP = require('../services/httpservice');
+var TodoCategory = React.createClass({
 
     getInitialState: function() {
         return {
@@ -16,17 +16,32 @@ var ListManager = React.createClass({
 
     handleSubmit: function(e) {
         e.preventDefault();
-        var currentItems = this.state.items;
-        currentItems.push(this.state.newItem);
-        this.state.newItem.created_at = Date.now();
-        this.setState({
-            items: currentItems,
-            newItem: {
-                title: '',
-                description: '',
-                created_at: ''
+
+        HTTP.post(`/todos?category=${this.props.categoryKey}`, this.state.newItem).then(function(bodyResponse) {
+            switch(bodyResponse.type) {
+                case 'success': {
+                    let todos = bodyResponse.data.todos;
+                    this.setState({
+                        items: todos,
+                        newItem: {
+                            title: '',
+                            description: '',
+                            created_at: ''
+                        }
+                    });
+                    break;
+                }
+                case 'fail': {
+                    console.log(bodyResponse.data);
+                    break;
+                }
+
+                case 'error': {
+                    console.log(bodyResponse.message);
+                    break;
+                }
             }
-        });
+        }.bind(this)).catch(err => {console.log(err)});
     },
     
     onTitleChange: function(e) {
@@ -42,6 +57,19 @@ var ListManager = React.createClass({
       var item = this.state.newItem;
       item.description = e.target.value;
       this.setState({newItem: item});
+    },
+
+    componentWillMount: function() {
+        HTTP.get('/todos?category='+this.props.categoryKey).then(function(bodyResponse){
+
+            if(bodyResponse.type === 'success'){
+                let todoItems = bodyResponse.data.todos.length > 0 ? bodyResponse.data.todos : [];
+                this.setState({items: todoItems});
+            }
+
+        }.bind(this)).catch(function(err){
+            console.log(err);
+        });
     },
 
     render: function() {
@@ -79,11 +107,11 @@ var ListManager = React.createClass({
                            
                         </form>
                     </div>
-                    <List items={this.state.items}/>
+                    <TodoList items={this.state.items}/>
                 </div>
             </div>
         );
     }
 });
 
-module.exports = ListManager;
+module.exports = TodoCategory;

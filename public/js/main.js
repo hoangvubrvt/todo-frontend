@@ -24790,70 +24790,497 @@ module.exports = traverseAllChildren;
 module.exports = require('./lib/React');
 
 },{"./lib/React":156}],179:[function(require,module,exports){
+(function(self) {
+  'use strict';
+
+  if (self.fetch) {
+    return
+  }
+
+  var support = {
+    searchParams: 'URLSearchParams' in self,
+    iterable: 'Symbol' in self && 'iterator' in Symbol,
+    blob: 'FileReader' in self && 'Blob' in self && (function() {
+      try {
+        new Blob()
+        return true
+      } catch(e) {
+        return false
+      }
+    })(),
+    formData: 'FormData' in self,
+    arrayBuffer: 'ArrayBuffer' in self
+  }
+
+  if (support.arrayBuffer) {
+    var viewClasses = [
+      '[object Int8Array]',
+      '[object Uint8Array]',
+      '[object Uint8ClampedArray]',
+      '[object Int16Array]',
+      '[object Uint16Array]',
+      '[object Int32Array]',
+      '[object Uint32Array]',
+      '[object Float32Array]',
+      '[object Float64Array]'
+    ]
+
+    var isDataView = function(obj) {
+      return obj && DataView.prototype.isPrototypeOf(obj)
+    }
+
+    var isArrayBufferView = ArrayBuffer.isView || function(obj) {
+      return obj && viewClasses.indexOf(Object.prototype.toString.call(obj)) > -1
+    }
+  }
+
+  function normalizeName(name) {
+    if (typeof name !== 'string') {
+      name = String(name)
+    }
+    if (/[^a-z0-9\-#$%&'*+.\^_`|~]/i.test(name)) {
+      throw new TypeError('Invalid character in header field name')
+    }
+    return name.toLowerCase()
+  }
+
+  function normalizeValue(value) {
+    if (typeof value !== 'string') {
+      value = String(value)
+    }
+    return value
+  }
+
+  // Build a destructive iterator for the value list
+  function iteratorFor(items) {
+    var iterator = {
+      next: function() {
+        var value = items.shift()
+        return {done: value === undefined, value: value}
+      }
+    }
+
+    if (support.iterable) {
+      iterator[Symbol.iterator] = function() {
+        return iterator
+      }
+    }
+
+    return iterator
+  }
+
+  function Headers(headers) {
+    this.map = {}
+
+    if (headers instanceof Headers) {
+      headers.forEach(function(value, name) {
+        this.append(name, value)
+      }, this)
+
+    } else if (headers) {
+      Object.getOwnPropertyNames(headers).forEach(function(name) {
+        this.append(name, headers[name])
+      }, this)
+    }
+  }
+
+  Headers.prototype.append = function(name, value) {
+    name = normalizeName(name)
+    value = normalizeValue(value)
+    var oldValue = this.map[name]
+    this.map[name] = oldValue ? oldValue+','+value : value
+  }
+
+  Headers.prototype['delete'] = function(name) {
+    delete this.map[normalizeName(name)]
+  }
+
+  Headers.prototype.get = function(name) {
+    name = normalizeName(name)
+    return this.has(name) ? this.map[name] : null
+  }
+
+  Headers.prototype.has = function(name) {
+    return this.map.hasOwnProperty(normalizeName(name))
+  }
+
+  Headers.prototype.set = function(name, value) {
+    this.map[normalizeName(name)] = normalizeValue(value)
+  }
+
+  Headers.prototype.forEach = function(callback, thisArg) {
+    for (var name in this.map) {
+      if (this.map.hasOwnProperty(name)) {
+        callback.call(thisArg, this.map[name], name, this)
+      }
+    }
+  }
+
+  Headers.prototype.keys = function() {
+    var items = []
+    this.forEach(function(value, name) { items.push(name) })
+    return iteratorFor(items)
+  }
+
+  Headers.prototype.values = function() {
+    var items = []
+    this.forEach(function(value) { items.push(value) })
+    return iteratorFor(items)
+  }
+
+  Headers.prototype.entries = function() {
+    var items = []
+    this.forEach(function(value, name) { items.push([name, value]) })
+    return iteratorFor(items)
+  }
+
+  if (support.iterable) {
+    Headers.prototype[Symbol.iterator] = Headers.prototype.entries
+  }
+
+  function consumed(body) {
+    if (body.bodyUsed) {
+      return Promise.reject(new TypeError('Already read'))
+    }
+    body.bodyUsed = true
+  }
+
+  function fileReaderReady(reader) {
+    return new Promise(function(resolve, reject) {
+      reader.onload = function() {
+        resolve(reader.result)
+      }
+      reader.onerror = function() {
+        reject(reader.error)
+      }
+    })
+  }
+
+  function readBlobAsArrayBuffer(blob) {
+    var reader = new FileReader()
+    var promise = fileReaderReady(reader)
+    reader.readAsArrayBuffer(blob)
+    return promise
+  }
+
+  function readBlobAsText(blob) {
+    var reader = new FileReader()
+    var promise = fileReaderReady(reader)
+    reader.readAsText(blob)
+    return promise
+  }
+
+  function readArrayBufferAsText(buf) {
+    var view = new Uint8Array(buf)
+    var chars = new Array(view.length)
+
+    for (var i = 0; i < view.length; i++) {
+      chars[i] = String.fromCharCode(view[i])
+    }
+    return chars.join('')
+  }
+
+  function bufferClone(buf) {
+    if (buf.slice) {
+      return buf.slice(0)
+    } else {
+      var view = new Uint8Array(buf.byteLength)
+      view.set(new Uint8Array(buf))
+      return view.buffer
+    }
+  }
+
+  function Body() {
+    this.bodyUsed = false
+
+    this._initBody = function(body) {
+      this._bodyInit = body
+      if (!body) {
+        this._bodyText = ''
+      } else if (typeof body === 'string') {
+        this._bodyText = body
+      } else if (support.blob && Blob.prototype.isPrototypeOf(body)) {
+        this._bodyBlob = body
+      } else if (support.formData && FormData.prototype.isPrototypeOf(body)) {
+        this._bodyFormData = body
+      } else if (support.searchParams && URLSearchParams.prototype.isPrototypeOf(body)) {
+        this._bodyText = body.toString()
+      } else if (support.arrayBuffer && support.blob && isDataView(body)) {
+        this._bodyArrayBuffer = bufferClone(body.buffer)
+        // IE 10-11 can't handle a DataView body.
+        this._bodyInit = new Blob([this._bodyArrayBuffer])
+      } else if (support.arrayBuffer && (ArrayBuffer.prototype.isPrototypeOf(body) || isArrayBufferView(body))) {
+        this._bodyArrayBuffer = bufferClone(body)
+      } else {
+        throw new Error('unsupported BodyInit type')
+      }
+
+      if (!this.headers.get('content-type')) {
+        if (typeof body === 'string') {
+          this.headers.set('content-type', 'text/plain;charset=UTF-8')
+        } else if (this._bodyBlob && this._bodyBlob.type) {
+          this.headers.set('content-type', this._bodyBlob.type)
+        } else if (support.searchParams && URLSearchParams.prototype.isPrototypeOf(body)) {
+          this.headers.set('content-type', 'application/x-www-form-urlencoded;charset=UTF-8')
+        }
+      }
+    }
+
+    if (support.blob) {
+      this.blob = function() {
+        var rejected = consumed(this)
+        if (rejected) {
+          return rejected
+        }
+
+        if (this._bodyBlob) {
+          return Promise.resolve(this._bodyBlob)
+        } else if (this._bodyArrayBuffer) {
+          return Promise.resolve(new Blob([this._bodyArrayBuffer]))
+        } else if (this._bodyFormData) {
+          throw new Error('could not read FormData body as blob')
+        } else {
+          return Promise.resolve(new Blob([this._bodyText]))
+        }
+      }
+
+      this.arrayBuffer = function() {
+        if (this._bodyArrayBuffer) {
+          return consumed(this) || Promise.resolve(this._bodyArrayBuffer)
+        } else {
+          return this.blob().then(readBlobAsArrayBuffer)
+        }
+      }
+    }
+
+    this.text = function() {
+      var rejected = consumed(this)
+      if (rejected) {
+        return rejected
+      }
+
+      if (this._bodyBlob) {
+        return readBlobAsText(this._bodyBlob)
+      } else if (this._bodyArrayBuffer) {
+        return Promise.resolve(readArrayBufferAsText(this._bodyArrayBuffer))
+      } else if (this._bodyFormData) {
+        throw new Error('could not read FormData body as text')
+      } else {
+        return Promise.resolve(this._bodyText)
+      }
+    }
+
+    if (support.formData) {
+      this.formData = function() {
+        return this.text().then(decode)
+      }
+    }
+
+    this.json = function() {
+      return this.text().then(JSON.parse)
+    }
+
+    return this
+  }
+
+  // HTTP methods whose capitalization should be normalized
+  var methods = ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'POST', 'PUT']
+
+  function normalizeMethod(method) {
+    var upcased = method.toUpperCase()
+    return (methods.indexOf(upcased) > -1) ? upcased : method
+  }
+
+  function Request(input, options) {
+    options = options || {}
+    var body = options.body
+
+    if (input instanceof Request) {
+      if (input.bodyUsed) {
+        throw new TypeError('Already read')
+      }
+      this.url = input.url
+      this.credentials = input.credentials
+      if (!options.headers) {
+        this.headers = new Headers(input.headers)
+      }
+      this.method = input.method
+      this.mode = input.mode
+      if (!body && input._bodyInit != null) {
+        body = input._bodyInit
+        input.bodyUsed = true
+      }
+    } else {
+      this.url = String(input)
+    }
+
+    this.credentials = options.credentials || this.credentials || 'omit'
+    if (options.headers || !this.headers) {
+      this.headers = new Headers(options.headers)
+    }
+    this.method = normalizeMethod(options.method || this.method || 'GET')
+    this.mode = options.mode || this.mode || null
+    this.referrer = null
+
+    if ((this.method === 'GET' || this.method === 'HEAD') && body) {
+      throw new TypeError('Body not allowed for GET or HEAD requests')
+    }
+    this._initBody(body)
+  }
+
+  Request.prototype.clone = function() {
+    return new Request(this, { body: this._bodyInit })
+  }
+
+  function decode(body) {
+    var form = new FormData()
+    body.trim().split('&').forEach(function(bytes) {
+      if (bytes) {
+        var split = bytes.split('=')
+        var name = split.shift().replace(/\+/g, ' ')
+        var value = split.join('=').replace(/\+/g, ' ')
+        form.append(decodeURIComponent(name), decodeURIComponent(value))
+      }
+    })
+    return form
+  }
+
+  function parseHeaders(rawHeaders) {
+    var headers = new Headers()
+    rawHeaders.split(/\r?\n/).forEach(function(line) {
+      var parts = line.split(':')
+      var key = parts.shift().trim()
+      if (key) {
+        var value = parts.join(':').trim()
+        headers.append(key, value)
+      }
+    })
+    return headers
+  }
+
+  Body.call(Request.prototype)
+
+  function Response(bodyInit, options) {
+    if (!options) {
+      options = {}
+    }
+
+    this.type = 'default'
+    this.status = 'status' in options ? options.status : 200
+    this.ok = this.status >= 200 && this.status < 300
+    this.statusText = 'statusText' in options ? options.statusText : 'OK'
+    this.headers = new Headers(options.headers)
+    this.url = options.url || ''
+    this._initBody(bodyInit)
+  }
+
+  Body.call(Response.prototype)
+
+  Response.prototype.clone = function() {
+    return new Response(this._bodyInit, {
+      status: this.status,
+      statusText: this.statusText,
+      headers: new Headers(this.headers),
+      url: this.url
+    })
+  }
+
+  Response.error = function() {
+    var response = new Response(null, {status: 0, statusText: ''})
+    response.type = 'error'
+    return response
+  }
+
+  var redirectStatuses = [301, 302, 303, 307, 308]
+
+  Response.redirect = function(url, status) {
+    if (redirectStatuses.indexOf(status) === -1) {
+      throw new RangeError('Invalid status code')
+    }
+
+    return new Response(null, {status: status, headers: {location: url}})
+  }
+
+  self.Headers = Headers
+  self.Request = Request
+  self.Response = Response
+
+  self.fetch = function(input, init) {
+    return new Promise(function(resolve, reject) {
+      var request = new Request(input, init)
+      var xhr = new XMLHttpRequest()
+
+      xhr.onload = function() {
+        var options = {
+          status: xhr.status,
+          statusText: xhr.statusText,
+          headers: parseHeaders(xhr.getAllResponseHeaders() || '')
+        }
+        options.url = 'responseURL' in xhr ? xhr.responseURL : options.headers.get('X-Request-URL')
+        var body = 'response' in xhr ? xhr.response : xhr.responseText
+        resolve(new Response(body, options))
+      }
+
+      xhr.onerror = function() {
+        reject(new TypeError('Network request failed'))
+      }
+
+      xhr.ontimeout = function() {
+        reject(new TypeError('Network request failed'))
+      }
+
+      xhr.open(request.method, request.url, true)
+
+      if (request.credentials === 'include') {
+        xhr.withCredentials = true
+      }
+
+      if ('responseType' in xhr && support.blob) {
+        xhr.responseType = 'blob'
+      }
+
+      request.headers.forEach(function(value, name) {
+        xhr.setRequestHeader(name, value)
+      })
+
+      xhr.send(typeof request._bodyInit === 'undefined' ? null : request._bodyInit)
+    })
+  }
+  self.fetch.polyfill = true
+})(typeof self !== 'undefined' ? self : this);
+
+},{}],180:[function(require,module,exports){
 var React = require('react');
-var ListItem = require('./ListItem.jsx');
-
-var ingredients = [{ "id": 1, "title": "ham" }, { "id": 2, "title": "cheese" }, { "id": 3, "title": "tomato" }];
-
-var List = React.createClass({
-    displayName: 'List',
+var TodoCategory = require('./TodoCategory.jsx');
+var HTTP = require('../services/httpservice');
+var CategoryList = React.createClass({
+    displayName: 'CategoryList',
 
 
     render: function () {
-        var createItem = function (item, index) {
-            return React.createElement(ListItem, { key: index + item.title, item: item });
+        createCategory = function (category, index) {
+            return React.createElement(
+                'div',
+                { key: index + category.key, id: index + ":" + category.key },
+                React.createElement(TodoCategory, { categoryKey: category.key, title: category.title })
+            );
         };
-
-        var listItems = ingredients.map(item => {
-            return React.createElement(ListItem, { key: item.id, ingredient: item.title });
-        });
-
         return React.createElement(
-            'ul',
+            'div',
             null,
-            this.props.items.map(createItem)
+            this.props.categories.map(createCategory)
         );
     }
 });
 
-module.exports = List;
+module.exports = CategoryList;
 
-},{"./ListItem.jsx":180,"react":178}],180:[function(require,module,exports){
+},{"../services/httpservice":185,"./TodoCategory.jsx":181,"react":178}],181:[function(require,module,exports){
 var React = require('react');
-var moment = require('moment');
-var ListItem = React.createClass({
-    displayName: 'ListItem',
-
-    render: function () {
-        var item = this.props.item;
-        var createdAt = moment(item.created_at).format("MM-DD-YYYY");
-        return React.createElement(
-            'li',
-            null,
-            React.createElement(
-                'h4',
-                null,
-                item.title,
-                ' - ',
-                createdAt
-            ),
-            React.createElement(
-                'p',
-                null,
-                item.description
-            )
-        );
-    }
-});
-
-module.exports = ListItem;
-
-},{"moment":24,"react":178}],181:[function(require,module,exports){
-var React = require('react');
-var List = require('./List.jsx');
-
-var ListManager = React.createClass({
-    displayName: 'ListManager',
+var TodoList = require('./TodoList.jsx');
+var HTTP = require('../services/httpservice');
+var TodoCategory = React.createClass({
+    displayName: 'TodoCategory',
 
 
     getInitialState: function () {
@@ -24869,16 +25296,36 @@ var ListManager = React.createClass({
 
     handleSubmit: function (e) {
         e.preventDefault();
-        var currentItems = this.state.items;
-        currentItems.push(this.state.newItem);
-        this.state.newItem.created_at = Date.now();
-        this.setState({
-            items: currentItems,
-            newItem: {
-                title: '',
-                description: '',
-                created_at: ''
+
+        HTTP.post(`/todos?category=${this.props.categoryKey}`, this.state.newItem).then(function (bodyResponse) {
+            switch (bodyResponse.type) {
+                case 'success':
+                    {
+                        let todos = bodyResponse.data.todos;
+                        this.setState({
+                            items: todos,
+                            newItem: {
+                                title: '',
+                                description: '',
+                                created_at: ''
+                            }
+                        });
+                        break;
+                    }
+                case 'fail':
+                    {
+                        console.log(bodyResponse.data);
+                        break;
+                    }
+
+                case 'error':
+                    {
+                        console.log(bodyResponse.message);
+                        break;
+                    }
             }
+        }.bind(this)).catch(err => {
+            console.log(err);
         });
     },
 
@@ -24895,6 +25342,18 @@ var ListManager = React.createClass({
         var item = this.state.newItem;
         item.description = e.target.value;
         this.setState({ newItem: item });
+    },
+
+    componentWillMount: function () {
+        HTTP.get('/todos?category=' + this.props.categoryKey).then(function (bodyResponse) {
+
+            if (bodyResponse.type === 'success') {
+                let todoItems = bodyResponse.data.todos.length > 0 ? bodyResponse.data.todos : [];
+                this.setState({ items: todoItems });
+            }
+        }.bind(this)).catch(function (err) {
+            console.log(err);
+        });
     },
 
     render: function () {
@@ -24959,21 +25418,221 @@ var ListManager = React.createClass({
                         )
                     )
                 ),
-                React.createElement(List, { items: this.state.items })
+                React.createElement(TodoList, { items: this.state.items })
             )
         );
     }
 });
 
-module.exports = ListManager;
+module.exports = TodoCategory;
 
-},{"./List.jsx":179,"react":178}],182:[function(require,module,exports){
+},{"../services/httpservice":185,"./TodoList.jsx":183,"react":178}],182:[function(require,module,exports){
+var React = require('react');
+var moment = require('moment');
+var TodoItem = React.createClass({
+    displayName: 'TodoItem',
+
+    render: function () {
+        var item = this.props.item;
+        var createdAt = moment(item.created_at).format("MM-DD-YYYY");
+        return React.createElement(
+            'li',
+            null,
+            React.createElement(
+                'h4',
+                null,
+                item.title,
+                ' - ',
+                createdAt
+            ),
+            React.createElement(
+                'p',
+                null,
+                item.description
+            )
+        );
+    }
+});
+
+module.exports = TodoItem;
+
+},{"moment":24,"react":178}],183:[function(require,module,exports){
+var React = require('react');
+var TodoItem = require('./TodoItem.jsx');
+
+var TodoList = React.createClass({
+    displayName: 'TodoList',
+
+
+    render: function () {
+        var createItem = function (item, index) {
+            return React.createElement(TodoItem, { key: index + item.title, item: item });
+        };
+
+        return React.createElement(
+            'ul',
+            null,
+            this.props.items.map(createItem)
+        );
+    }
+});
+
+module.exports = TodoList;
+
+},{"./TodoItem.jsx":182,"react":178}],184:[function(require,module,exports){
 var React = require('react');
 var ReactDOM = require('react-dom');
-var ListManager = require('./components/ListManager.jsx');
+var CategoryList = require('./components/CategoryList.jsx');
+var HTTP = require('./services/httpservice');
 
-ReactDOM.render(React.createElement(ListManager, { title: 'Ingredients' }), document.getElementById('ingredients'));
-ReactDOM.render(React.createElement(ListManager, { title: 'TO DO' }), document.getElementById('todo'));
-ReactDOM.render(React.createElement(ListManager, { title: 'Hello React', headingColor: '#b31217' }), document.getElementById('helloreact'));
+var Main = React.createClass({
+    displayName: 'Main',
 
-},{"./components/ListManager.jsx":181,"react":178,"react-dom":27}]},{},[182]);
+    getInitialState: function () {
+        return {
+            categories: [],
+            newCategory: {
+                key: '',
+                title: ''
+            }
+        };
+    },
+
+    componentWillMount: function () {
+        HTTP.get('/categories').then(function (bodyResponse) {
+            this.setState({ categories: bodyResponse.data.categories });
+        }.bind(this)).catch(function (err) {
+            console.log(err);
+        });
+    },
+
+    onKeyChange: function (e) {
+        var category = this.state.newCategory;
+        category.key = e.target.value;
+        this.setState({
+            newCategory: category
+        });
+    },
+
+    onTitleChange: function (e) {
+        var category = this.state.newCategory;
+        category.title = e.target.value;
+
+        this.setState({
+            newCategory: category
+        });
+    },
+
+    handleSubmit: function (e) {
+        e.preventDefault();
+        HTTP.post('/categories', this.state.newCategory).then(function (bodyResponse) {
+            var currentCategories = this.state.categories;
+            currentCategories.push(bodyResponse.data);
+
+            this.setState({
+                categories: currentCategories,
+                newCategory: {
+                    key: '',
+                    title: ''
+                }
+            });
+        }.bind(this)).catch(function (err) {
+            console.log(err);
+        });
+    },
+
+    render: function () {
+        return React.createElement(
+            'div',
+            { className: 'panel panel-default' },
+            React.createElement(
+                'div',
+                { className: 'panel-heading' },
+                React.createElement(
+                    'h3',
+                    { className: 'panel-title' },
+                    'Create new todo category'
+                )
+            ),
+            React.createElement(
+                'div',
+                { className: 'panel-body' },
+                React.createElement(
+                    'form',
+                    { onSubmit: this.handleSubmit },
+                    React.createElement(
+                        'div',
+                        { className: 'form-group' },
+                        React.createElement(
+                            'label',
+                            null,
+                            'Category Key'
+                        ),
+                        React.createElement('input', { className: 'form-control', onChange: this.onKeyChange, value: this.state.newCategory.key })
+                    ),
+                    React.createElement(
+                        'div',
+                        { className: 'form-group' },
+                        React.createElement(
+                            'label',
+                            null,
+                            'Category Title'
+                        ),
+                        React.createElement('input', { className: 'form-control', onChange: this.onTitleChange, value: this.state.newCategory.title })
+                    ),
+                    React.createElement(
+                        'div',
+                        { className: 'form-group' },
+                        React.createElement(
+                            'button',
+                            { className: 'btn btn-primary' },
+                            'Add New Category'
+                        )
+                    )
+                )
+            ),
+            React.createElement(CategoryList, { categories: this.state.categories })
+        );
+    }
+});
+
+ReactDOM.render(React.createElement(Main, null), document.getElementById('container'));
+
+},{"./components/CategoryList.jsx":180,"./services/httpservice":185,"react":178,"react-dom":27}],185:[function(require,module,exports){
+var Fetch = require('whatwg-fetch');
+var baseURL = 'http://localhost:8081/api';
+
+var service = {
+    get: function (url) {
+        return fetch(baseURL + url).then(function (response) {
+            if (response.status !== 200) {
+                console.log('Looks like there was a problem. Status Code: ' + response.status);
+                return;
+            }
+            console.log('Get request URL: ' + response.url);
+            return response.json();
+        });
+    },
+
+    post: function (url, data) {
+        return fetch(baseURL + url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        }).then(function (response) {
+            console.log('POST request URL: ' + response.url);
+            if (response.status !== 200) {
+                console.log('Looks like there was a problem. Status Code: ' + response.status);
+                return;
+            }
+
+            return response.json();
+        });
+    }
+};
+
+module.exports = service;
+
+},{"whatwg-fetch":179}]},{},[184]);
