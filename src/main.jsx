@@ -2,6 +2,11 @@ var React = require('react');
 var ReactDOM = require('react-dom');
 var CategoryList = require('./components/CategoryList.jsx');
 var HTTP = require('./services/httpservice');
+var Promise = require('promise-polyfill');
+
+if(!window.Promise){
+    window.Promise = Promise;
+}
 
 var Main = React.createClass({
     getInitialState: function() {
