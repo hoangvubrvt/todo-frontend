@@ -1,14 +1,19 @@
 var Fetch = require('whatwg-fetch');
-var baseURL = 'http://localhost:8081/api';
+var baseURL = `http://localhost:8081/api`;
+
+if(process.env.NODE_ENV === 'production'){
+    baseURL = "http://188.166.236.122/api";
+}
 
 var service = {
     get: function (url) {
+        console.log(baseURL);
         return fetch(baseURL + url).then(function (response) {
             if (response.status !== 200) {
-                console.log('Looks like there was a problem. Status Code: ' + response.status);
+                console.error('Looks like there was a problem. Status Code: ' + response.body.data);
                 return;
             }
-            console.log('Get request URL: ' + response.url);
+            console.debug('Get request URL: ' + response.url);
             return response.json();
         });
     },
@@ -21,9 +26,9 @@ var service = {
             },
             body: JSON.stringify(data)
         }).then(function (response) {
-            console.log('POST request URL: ' + response.url);
+            console.debug('POST request URL: ' + response.url);
             if (response.status !== 200) {
-                console.log('Looks like there was a problem. Status Code: ' + response.status);
+                console.error('Looks like there was a problem. Status Code: ' + response.body.data);
                 return;
             }
 
