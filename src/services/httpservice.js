@@ -7,7 +7,6 @@ if(process.env.NODE_ENV === 'production'){
 
 var service = {
     get: function (url) {
-        console.log(baseURL);
         return fetch(baseURL + url).then(function (response) {
             if (response.status !== 200) {
                 console.error('Looks like there was a problem. Status Code: ' + response.body.data);
